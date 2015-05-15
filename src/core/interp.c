@@ -1488,21 +1488,21 @@ void MVM_interp_run(MVMThreadContext *tc, void (*initial_invoke)(MVMThreadContex
                 GET_REG(cur_op, 0).i64 = MVM_string_graphs(tc, GET_REG(cur_op, 2).s);
                 cur_op += 4;
                 goto NEXT;
-            OP(chr): {
-                GET_REG(cur_op, 0).s = MVM_string_chr(tc, (MVMGrapheme32)GET_REG(cur_op, 2).i64);
+            OP(chr):
+                GET_REG(cur_op, 0).s = MVM_string_chr(tc, (MVMCodepoint)GET_REG(cur_op, 2).i64);
                 cur_op += 4;
                 goto NEXT;
-            }
             OP(ordfirst): {
                 MVMString *s = GET_REG(cur_op, 2).s;
-                GET_REG(cur_op, 0).i64 = MVM_string_get_grapheme_at(tc, s, 0);
+                MVMGrapheme32 g = MVM_string_get_grapheme_at(tc, s, 0);
+                GET_REG(cur_op, 0).i64 = g >= 0 ? g : MVM_nfg_get_synthetic_info(tc, g)->base;
                 cur_op += 4;
                 goto NEXT;
             }
             OP(ordat): {
                 MVMString *s = GET_REG(cur_op, 2).s;
-                GET_REG(cur_op, 0).i64 = MVM_string_get_grapheme_at(tc, s, GET_REG(cur_op, 4).i64);
-                /* XXX what to do with synthetics?  return them? */
+                MVMGrapheme32 g = MVM_string_get_grapheme_at(tc, s, GET_REG(cur_op, 4).i64);
+                GET_REG(cur_op, 0).i64 = g >= 0 ? g : MVM_nfg_get_synthetic_info(tc, g)->base;
                 cur_op += 6;
                 goto NEXT;
             }
@@ -2606,7 +2606,7 @@ void MVM_interp_run(MVMThreadContext *tc, void (*initial_invoke)(MVMThreadContex
                 cur_op += 2;
                 goto NEXT;
             OP(newtype): {
-                MVMObject *type_obj, *how = GET_REG(cur_op, 2).o;
+                MVMObject *how = GET_REG(cur_op, 2).o;
                 MVMString *repr_name = GET_REG(cur_op, 4).s;
                 const MVMREPROps *repr = MVM_repr_get_by_name(tc, repr_name);
                 GET_REG(cur_op, 0).o = repr->type_object_for(tc, how);
@@ -3233,12 +3233,9 @@ void MVM_interp_run(MVMThreadContext *tc, void (*initial_invoke)(MVMThreadContex
                 GET_REG(cur_op, 0).o = MVM_io_accept(tc, GET_REG(cur_op, 2).o);
                 cur_op += 4;
                 goto NEXT;
-            OP(DEPRECATED_1):
-                MVM_exception_throw_adhoc(tc, "Deprecated opcode executed");
-                goto NEXT;
-            OP(DEPRECATED_2):
-                MVM_exception_throw_adhoc(tc, "Deprecated opcode executed");
-                goto NEXT;
+            OP(decodetocodes):
+            OP(encodefromcodes):
+                MVM_exception_throw_adhoc(tc, "NYI");
             OP(setencoding):
                 MVM_io_set_encoding(tc, GET_REG(cur_op, 0).o, GET_REG(cur_op, 2).s);
                 cur_op += 4;
@@ -3268,7 +3265,6 @@ void MVM_interp_run(MVMThreadContext *tc, void (*initial_invoke)(MVMThreadContex
                 cur_op += 4;
                 goto NEXT;
             OP(readlineint_fh):
-                GET_REG(cur_op, 0).s = MVM_file_readline_interactive_fh(tc, GET_REG(cur_op, 2).o, GET_REG(cur_op, 4).s);
                 cur_op += 6;
                 goto NEXT;
             OP(chdir):
@@ -4499,6 +4495,45 @@ void MVM_interp_run(MVMThreadContext *tc, void (*initial_invoke)(MVMThreadContex
             OP(nativecallsizeof):
                 GET_REG(cur_op, 0).i64 = MVM_nativecall_sizeof(tc, GET_REG(cur_op, 2).o);
                 cur_op += 4;
+                goto NEXT;
+            OP(encodenorm):
+                MVM_exception_throw_adhoc(tc, "NYI");
+            OP(normalizecodes):
+                MVM_unicode_normalize_codepoints(tc, GET_REG(cur_op, 0).o, GET_REG(cur_op, 4).o,
+                    MVN_unicode_normalizer_form(tc, GET_REG(cur_op, 2).i64));
+                cur_op += 6;
+                goto NEXT;
+            OP(strfromcodes):
+                GET_REG(cur_op, 0).s = MVM_unicode_codepoints_to_nfg_string(tc,
+                    GET_REG(cur_op, 2).o);
+                cur_op += 4;
+                goto NEXT;
+            OP(strtocodes):
+                MVM_unicode_string_to_codepoints(tc, GET_REG(cur_op, 0).s,
+                    MVN_unicode_normalizer_form(tc, GET_REG(cur_op, 2).i64),
+                    GET_REG(cur_op, 4).o);
+                cur_op += 6;
+                goto NEXT;
+            OP(getcodelocation):
+                GET_REG(cur_op, 0).o = MVM_code_location(tc, GET_REG(cur_op, 2).o);
+                cur_op += 4;
+                goto NEXT;
+            OP(eqatim_s):
+                if (MVM_string_graphs(tc, GET_REG(cur_op, 2).s) <= GET_REG(cur_op, 6).i64)
+                    GET_REG(cur_op, 0).i64 = 0;
+                else
+                    GET_REG(cur_op, 0).i64 = MVM_string_ord_basechar_at(tc, GET_REG(cur_op, 2).s, GET_REG(cur_op, 6).i64)
+                                          == MVM_string_ord_basechar_at(tc, GET_REG(cur_op, 4).s, 0)
+                                           ? 1 : 0;
+                cur_op += 8;
+                goto NEXT;
+            OP(ordbaseat):
+                GET_REG(cur_op, 0).i64 = MVM_string_ord_basechar_at(tc, GET_REG(cur_op, 2).s, GET_REG(cur_op, 4).i64);
+                cur_op += 6;
+                goto NEXT;
+            OP(neverrepossess):
+                MVM_6model_never_repossess(tc, GET_REG(cur_op, 0).o);
+                cur_op += 2;
                 goto NEXT;
             OP(sp_log):
                 if (tc->cur_frame->spesh_log_idx >= 0) {

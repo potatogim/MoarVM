@@ -19,8 +19,6 @@ static MVMObject * type_object_for(MVMThreadContext *tc, MVMObject *HOW) {
 
 /* Copies the body of one object to another. */
 static void copy_to(MVMThreadContext *tc, MVMSTable *st, void *src, MVMObject *dest_root, void *dest) {
-    MVMContextBody *src_body  = (MVMContextBody *)src;
-    MVMContextBody *dest_body = (MVMContextBody *)dest;
     MVM_panic(MVM_exitcode_NYI, "MVMContext copy_to NYI");
 }
 
@@ -117,6 +115,10 @@ static MVMStorageSpec get_value_storage_spec(MVMThreadContext *tc, MVMSTable *st
     spec.inlineable      = MVM_STORAGE_SPEC_REFERENCE;
     spec.boxed_primitive = MVM_STORAGE_SPEC_BP_NONE;
     spec.can_box         = 0;
+    spec.bits            = 0;
+    spec.align           = 0;
+    spec.is_unsigned     = 0;
+
     return spec;
 }
 

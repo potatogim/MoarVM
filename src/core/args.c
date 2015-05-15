@@ -179,8 +179,6 @@ static MVMObject * decont_arg(MVMThreadContext *tc, MVMObject *arg) {
             const MVMStorageSpec *ss; \
             obj = decont_arg(tc, result.arg.o); \
             ss = REPR(obj)->get_storage_spec(tc, STABLE(obj)); \
-            if (!IS_CONCRETE(obj)) \
-                MVM_exception_throw_adhoc(tc, "Cannot unbox a type object"); \
             switch (ss->can_box & MVM_STORAGE_SPEC_CAN_BOX_MASK) { \
                 case MVM_STORAGE_SPEC_CAN_BOX_INT: \
                     result.arg.i64 = MVM_repr_get_int(tc, obj); \
@@ -656,7 +654,7 @@ MVMObject * MVM_args_slurpy_named(MVMThreadContext *tc, MVMArgProcContext *ctx) 
 }
 
 static void flatten_args(MVMThreadContext *tc, MVMArgProcContext *ctx) {
-    MVMArgInfo arg_info, key_info, val_info;
+    MVMArgInfo arg_info;
     MVMuint16 flag_pos = 0, arg_pos = 0, new_arg_pos = 0,
         new_arg_flags_size = ctx->arg_count > 0x7FFF ? ctx->arg_count : ctx->arg_count * 2,
         new_args_size = new_arg_flags_size, i, new_flag_pos = 0, new_num_pos = 0;
@@ -755,8 +753,9 @@ static void flatten_args(MVMThreadContext *tc, MVMArgProcContext *ctx) {
         if (arg_info.arg.o && REPR(arg_info.arg.o)->ID == MVM_REPR_ID_MVMHash) {
             MVMHashBody *body = &((MVMHash *)arg_info.arg.o)->body;
             MVMHashEntry *current, *tmp;
+            unsigned bucket_tmp;
 
-            HASH_ITER(hash_handle, body->hash_head, current, tmp) {
+            HASH_ITER(hash_handle, body->hash_head, current, tmp, bucket_tmp) {
 
                 if (new_arg_pos + 1 >= new_args_size) {
                     new_args = MVM_realloc(new_args, (new_args_size *= 2) * sizeof(MVMRegister));

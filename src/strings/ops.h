@@ -45,6 +45,7 @@ void MVM_string_say(MVMThreadContext *tc, MVMString *a);
 void MVM_string_print(MVMThreadContext *tc, MVMString *a);
 MVMint64 MVM_string_equal_at(MVMThreadContext *tc, MVMString *a, MVMString *b, MVMint64 offset);
 MVMint64 MVM_string_equal_at_ignore_case(MVMThreadContext *tc, MVMString *a, MVMString *b, MVMint64 offset);
+MVMGrapheme32 MVM_string_ord_basechar_at(MVMThreadContext *tc, MVMString *s, MVMint64 offset);
 MVMint64 MVM_string_have_at(MVMThreadContext *tc, MVMString *a, MVMint64 starta, MVMint64 length, MVMString *b, MVMint64 startb);
 MVMint64 MVM_string_get_grapheme_at(MVMThreadContext *tc, MVMString *a, MVMint64 index);
 MVMint64 MVM_string_index_of_grapheme(MVMThreadContext *tc, MVMString *a, MVMGrapheme32 codepoint);
@@ -61,6 +62,7 @@ MVMint64 MVM_string_char_at_in_string(MVMThreadContext *tc, MVMString *a, MVMint
 MVMint64 MVM_string_offset_has_unicode_property_value(MVMThreadContext *tc, MVMString *s, MVMint64 offset, MVMint64 property_code, MVMint64 property_value_code);
 MVMint64 MVM_unicode_codepoint_has_property_value(MVMThreadContext *tc, MVMGrapheme32 grapheme, MVMint64 property_code, MVMint64 property_value_code);
 MVMString * MVM_unicode_codepoint_get_property_str(MVMThreadContext *tc, MVMGrapheme32 grapheme, MVMint64 property_code);
+const char * MVM_unicode_codepoint_get_property_cstr(MVMThreadContext *tc, MVMGrapheme32 grapheme, MVMint64 property_code);
 MVMint64 MVM_unicode_codepoint_get_property_int(MVMThreadContext *tc, MVMGrapheme32 grapheme, MVMint64 property_code);
 MVMint64 MVM_unicode_codepoint_get_property_bool(MVMThreadContext *tc, MVMGrapheme32 grapheme, MVMint64 property_code);
 MVMString * MVM_unicode_get_name(MVMThreadContext *tc, MVMint64 grapheme);
@@ -76,4 +78,4 @@ MVMint64 MVM_string_is_cclass(MVMThreadContext *tc, MVMint64 cclass, MVMString *
 MVMint64 MVM_string_find_cclass(MVMThreadContext *tc, MVMint64 cclass, MVMString *s, MVMint64 offset, MVMint64 count);
 MVMint64 MVM_string_find_not_cclass(MVMThreadContext *tc, MVMint64 cclass, MVMString *s, MVMint64 offset, MVMint64 count);
 MVMuint8 MVM_string_find_encoding(MVMThreadContext *tc, MVMString *name);
-MVMString * MVM_string_chr(MVMThreadContext *tc, MVMGrapheme32 g);
+MVMString * MVM_string_chr(MVMThreadContext *tc, MVMCodepoint cp);

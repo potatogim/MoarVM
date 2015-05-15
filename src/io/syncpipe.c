@@ -29,14 +29,17 @@ static MVMint64 do_close(MVMThreadContext *tc, MVMIOSyncPipeData *data) {
     /* closing the in-/output std filehandle will shutdown the child process. */
     uv_unref((uv_handle_t*)data->ss.handle);
     uv_close((uv_handle_t*)data->ss.handle, NULL);
-    uv_run(tc->loop, UV_RUN_DEFAULT);
     if (data->process) {
 #ifdef _WIN32
         if (!uv_is_closing((uv_handle_t*)data->process))
             uv_process_close(tc->loop, data->process);
         GetExitCodeProcess(data->process->process_handle, &status);
+        status = status << 8;
 #else
-        waitpid(data->process->pid, &status, 0);
+        pid_t wpid;
+        do
+            wpid = waitpid(data->process->pid, &status, 0);
+        while (wpid == -1 && errno == EINTR);
 #endif
     }
     if (!status && data->process->data) {
@@ -52,7 +55,7 @@ static MVMint64 do_close(MVMThreadContext *tc, MVMIOSyncPipeData *data) {
         MVM_string_decodestream_destory(tc, data->ss.ds);
         data->ss.ds = NULL;
     }
-    return status;
+    return (MVMint64)status;
 }
 static MVMint64 closefh(MVMThreadContext *tc, MVMOSHandle *h) {
     MVMIOSyncPipeData *data = (MVMIOSyncPipeData *)h->body.data;

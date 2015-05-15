@@ -86,8 +86,12 @@ void MVM_string_ascii_decodestream(MVMThreadContext *tc, MVMDecodeStream *ds,
 
     /* Attach what we successfully parsed as a result buffer, and trim away
      * what we chewed through. */
-    if (count)
+    if (count) {
         MVM_string_decodestream_add_chars(tc, ds, buffer, count);
+    }
+    else {
+	MVM_free(buffer);
+    }
     MVM_string_decodestream_discard_to(tc, ds, last_accept_bytes, last_accept_pos);
 }
 
@@ -101,7 +105,6 @@ char * MVM_string_ascii_encode_substr(MVMThreadContext *tc, MVMString *str, MVMu
     MVMStringIndex strgraphs = MVM_string_graphs(tc, str);
     MVMuint32      lengthu   = (MVMuint32)(length == -1 ? strgraphs - startu : length);
     MVMuint8      *result;
-    size_t         i;
 
     /* must check start first since it's used in the length check */
     if (start < 0 || start > strgraphs)

@@ -24,6 +24,7 @@ MVMFixedSizeAlloc * MVM_fixed_size_create(MVMThreadContext *tc) {
     if ((init_stat = uv_mutex_init(&(al->complex_alloc_mutex))) < 0)
         MVM_exception_throw_adhoc(tc, "Failed to initialize mutex: %s",
             uv_strerror(init_stat));
+    al->freelist_spin = 0;
     return al;
 }
 
@@ -77,7 +78,7 @@ static void * alloc_slow_path(MVMThreadContext *tc, MVMFixedSizeAlloc *al, MVMui
     void *result;
 
     /* Lock, unless single-threaded. */
-    MVMint32 lock = tc->instance->next_user_thread_id != 2;
+    MVMint32 lock = MVM_instance_have_user_threads(tc);
     if (lock)
         uv_mutex_lock(&(al->complex_alloc_mutex));
 
@@ -107,18 +108,26 @@ void * MVM_fixed_size_alloc(MVMThreadContext *tc, MVMFixedSizeAlloc *al, size_t 
 #else
     MVMuint32 bin = bin_for(bytes);
     if (bin < MVM_FSA_BINS) {
-        char *allocd;
-
         /* Try and take from the free list (fast path). */
         MVMFixedSizeAllocSizeClass     *bin_ptr = &(al->size_classes[bin]);
         MVMFixedSizeAllocFreeListEntry *fle;
-        if (tc->instance->next_user_thread_id != 2) {
-            /* Multi-threaded; race for it. */
+        if (MVM_instance_have_user_threads(tc)) {
+            /* Multi-threaded; take a lock. Note that the lock is needed in
+             * addition to the atomic operations: the atomics allow us to add
+             * to the free list in a lock-free way, and the lock allows us to
+             * avoid the ABA issue we'd have with only the atomics. */
+            while (!MVM_trycas(&(al->freelist_spin), 0, 1)) {
+                MVMint32 i = 0;
+                while (i < 1024)
+                    i++;
+            }
             do {
                 fle = bin_ptr->free_list;
                 if (!fle)
                     break;
             } while (!MVM_trycas(&(bin_ptr->free_list), fle, fle->next));
+            MVM_barrier();
+            al->freelist_spin = 0;
         }
         else {
             /* Single-threaded; just take it. */
@@ -160,7 +169,7 @@ void MVM_fixed_size_free(MVMThreadContext *tc, MVMFixedSizeAlloc *al, size_t byt
         MVMFixedSizeAllocSizeClass     *bin_ptr = &(al->size_classes[bin]);
         MVMFixedSizeAllocFreeListEntry *to_add  = (MVMFixedSizeAllocFreeListEntry *)to_free;
         MVMFixedSizeAllocFreeListEntry *orig;
-        if (tc->instance->next_user_thread_id != 2) {
+        if (MVM_instance_have_user_threads(tc)) {
             /* Multi-threaded; race to add it. */
             do {
                 orig = bin_ptr->free_list;
@@ -176,6 +185,50 @@ void MVM_fixed_size_free(MVMThreadContext *tc, MVMFixedSizeAlloc *al, size_t byt
     else {
         /* Was malloc'd due to being oversize, so just free it. */
         MVM_free(to_free);
+    }
+#endif
+}
+
+/* Queues a piece of memory of the specified size to be freed at the next
+ * global safe point, using the FSA. A global safe point is defined as one in
+ * which all threads, since we requested the freeing of the memory, have
+ * reached a safe point. */
+void MVM_fixed_size_free_at_safepoint(MVMThreadContext *tc, MVMFixedSizeAlloc *al, size_t bytes, void *to_free) {
+#if FSA_SIZE_DEBUG
+    MVMFixedSizeAllocDebug *dbg = (MVMFixedSizeAllocDebug *)((char *)to_free - 8);
+    if (dbg->alloc_size != bytes)
+        MVM_panic(1, "Fixed size allocator: wrong size in free");
+    MVM_free(dbg);
+#else
+    MVMuint32 bin = bin_for(bytes);
+    if (bin < MVM_FSA_BINS) {
+        /* Came from a bin; put into free list. */
+        MVMFixedSizeAllocSizeClass     *bin_ptr = &(al->size_classes[bin]);
+        MVMFixedSizeAllocFreeListEntry *to_add  = (MVMFixedSizeAllocFreeListEntry *)to_free;
+        MVMFixedSizeAllocFreeListEntry *orig;
+        if (MVM_instance_have_user_threads(tc)) {
+            /* Multi-threaded; race to add it to the "free at next safe point"
+             * list. */
+            MVM_panic(1, "MVM_fixed_size_free_at_safepoint not yet fully implemented");
+        }
+        else {
+            /* Single-threaded, so no global safepoint issues to care for; put
+             * it on the free list right away. */
+            to_add->next       = bin_ptr->free_list;
+            bin_ptr->free_list = to_add;
+        }
+    }
+    else {
+        /* Was malloc'd due to being oversize. */
+        if (MVM_instance_have_user_threads(tc)) {
+            /* Multi-threaded; race to add it to the "free at next safe point"
+             * list. */
+            MVM_panic(1, "MVM_fixed_size_free_at_safepoint not yet fully implemented");
+        }
+        else {
+            /* Single threaded, so free it immediately. */
+            MVM_free(to_free);
+        }
     }
 #endif
 }

@@ -22,6 +22,7 @@
 |.type MVMITER, MVMIter
 |.type MVMINSTANCE, MVMInstance
 |.type OBJECT, MVMObject
+|.type STOOGE, MVMObjectStooge
 |.type COLLECTABLE, MVMCollectable
 |.type STABLE, MVMSTable
 |.type REPR, MVMREPROps
@@ -210,10 +211,15 @@ void MVM_jit_emit_prologue(MVMThreadContext *tc, MVMJitGraph *jg,
     /* Setup stack */
     | push rbp; // nb, this aligns the stack to 16 bytes again
     | mov rbp, rsp;
-    /* allocate stack space for 4 callee-save registers,
-       4 quadwords of scratch space, 4 stack parameters,
-       and 4 parameter registers (windows only) */
-    | sub rsp, 0x80;
+    /* allocate stack space: 0x100 bytes = 256 bytes
+     *
+     * layout: [ a: 0x20 | b: 0x20 | c: 0xa0 | d: 0x20 ]
+     * a: space for 4 callee-save registers
+     * b: small scratch space
+     * c: space for stack arguments to c calls
+     * d: reserve space for GPR registers to c calls (win64) or more space for
+     * stack arguments (posix) */
+    | sub rsp, 0x100;
     /* save callee-save registers */
     | mov [rbp-0x8],  TC;
     | mov [rbp-0x10], CU;
@@ -609,10 +615,56 @@ void MVM_jit_emit_primitive(MVMThreadContext *tc, MVMJitGraph *jg,
 
     case MVM_OP_add_i:
     case MVM_OP_sub_i:
-    case MVM_OP_mul_i:
     case MVM_OP_bor_i:
     case MVM_OP_band_i:
-    case MVM_OP_bxor_i:
+    case MVM_OP_bxor_i: {
+        MVMint32 reg_a = ins->operands[0].reg.orig;
+        MVMint32 reg_b = ins->operands[1].reg.orig;
+        MVMint32 reg_c = ins->operands[2].reg.orig;
+        if (reg_a == reg_b) {
+            MVM_jit_log(tc, "accumulator stayed in memory\n");
+            | mov rax, WORK[reg_c];
+            switch(ins->info->opcode) {
+            case MVM_OP_add_i:
+                | add WORK[reg_a], rax;
+                break;
+            case MVM_OP_sub_i:
+                | sub WORK[reg_a], rax;
+                break;
+            case MVM_OP_bor_i:
+                | or WORK[reg_a], rax;
+                break;
+            case MVM_OP_band_i:
+                | and WORK[reg_a], rax;
+                break;
+            case MVM_OP_bxor_i:
+                | xor WORK[reg_a], rax;
+                break;
+            }
+        } else {
+            | mov rax, WORK[reg_b];
+            switch(ins->info->opcode) {
+            case MVM_OP_add_i:
+                | add rax, WORK[reg_c];
+                break;
+            case MVM_OP_sub_i:
+                | sub rax, WORK[reg_c];
+                break;
+            case MVM_OP_bor_i:
+                | or rax, WORK[reg_c];
+                break;
+            case MVM_OP_band_i:
+                | and rax, WORK[reg_c];
+                break;
+            case MVM_OP_bxor_i:
+                | xor rax, WORK[reg_c];
+                break;
+            }
+            | mov WORK[reg_a], rax;
+        }
+        break;
+    }
+    case MVM_OP_mul_i:
     case MVM_OP_blshift_i:
     case MVM_OP_brshift_i: {
         MVMint32 reg_a = ins->operands[0].reg.orig;
@@ -620,23 +672,8 @@ void MVM_jit_emit_primitive(MVMThreadContext *tc, MVMJitGraph *jg,
         MVMint32 reg_c = ins->operands[2].reg.orig;
         | mov rax, WORK[reg_b];
         switch(ins->info->opcode) {
-        case MVM_OP_add_i:
-            | add rax, WORK[reg_c];
-            break;
-        case MVM_OP_sub_i:
-            | sub rax, WORK[reg_c];
-            break;
         case MVM_OP_mul_i:
             | imul rax, WORK[reg_c];
-            break;
-        case MVM_OP_bor_i:
-            | or rax, WORK[reg_c];
-            break;
-        case MVM_OP_band_i:
-            | and rax, WORK[reg_c];
-            break;
-        case MVM_OP_bxor_i:
-            | xor rax, WORK[reg_c];
             break;
         case MVM_OP_blshift_i:
             | mov cl, byte WORK[reg_c];
@@ -1361,6 +1398,14 @@ static void load_call_arg(MVMThreadContext *tc, MVMJitGraph *jg,
     case MVM_JIT_LITERAL_F:
         | mov64 TMP6, arg.v.lit_i64;
         break;
+    case MVM_JIT_REG_STABLE:
+        | mov TMP6, qword WORK[arg.v.reg];
+        | mov TMP6, OBJECT:TMP6->st;
+        break;
+    case MVM_JIT_REG_OBJBODY:
+        | mov TMP6, qword WORK[arg.v.reg];
+        | lea TMP6, STOOGE:TMP6->data;
+        break;
     }
 }
 
@@ -1429,10 +1474,10 @@ static void emit_sse_arg(MVMThreadContext *tc, MVMJitGraph *jg,
 static void emit_stack_arg(MVMThreadContext *tc, MVMJitGraph *jg,
                            MVMint32 arg_size, MVMint32 pos,
                            dasm_State **Dst) {
-    /* basically, stack argumetns are passed in right-to-left order
+    /* basically, stack arguments are passed in right-to-left order
        on both POSIX and W64 backends, it seems. Thus the most logical
        thing to do is to count from the stack top upwards. */
-    if (pos + arg_size > 64) {
+    if (pos + arg_size > 160) {
         MVM_exception_throw_adhoc(tc, "JIT: trying to pass arguments "
                                   " in local space (stack top offset: "
                                   " %d, size: %d)", pos, arg_size);
@@ -1469,6 +1514,8 @@ static void emit_posix_callargs(MVMThreadContext *tc, MVMJitGraph *jg,
         case MVM_JIT_INTERP_VAR:
         case MVM_JIT_REG_VAL:
         case MVM_JIT_REG_ADDR:
+        case MVM_JIT_REG_OBJBODY:
+        case MVM_JIT_REG_STABLE:
         case MVM_JIT_STR_IDX:
         case MVM_JIT_LITERAL:
         case MVM_JIT_LITERAL_64:
@@ -1871,7 +1918,7 @@ void MVM_jit_emit_invoke(MVMThreadContext *tc, MVMJitGraph *jg, MVMJitInvoke *in
 void MVM_jit_emit_jumplist(MVMThreadContext *tc, MVMJitGraph *jg,
                            MVMJitJumpList *jumplist, dasm_State **Dst) {
     MVMint32 i;
-    MVM_jit_log(tc, "Emit jumplist (%d labels)\n", jumplist->num_labels);
+    MVM_jit_log(tc, "Emit jumplist (%"PRId64" labels)\n", jumplist->num_labels);
     | mov TMP1, WORK[jumplist->reg];
     | cmp TMP1, 0;
     | jl >2;

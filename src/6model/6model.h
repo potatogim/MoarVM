@@ -125,7 +125,13 @@ typedef enum {
     MVM_CF_SERIALZATION_INDEX_ALLOCATED = 256,
 
     /* Have we arranged a persistent object ID for this object? */
-    MVM_CF_HAS_OBJECT_ID = 512
+    MVM_CF_HAS_OBJECT_ID = 512,
+
+    /* Have we flagged this object as something we must never repossess? */
+    /* Note: if you're hunting for a flag, some day in the future when we
+     * have used them all, this one is easy enough to eliminate by having the
+     * tiny number of objects marked this way in a remembered set. */
+    MVM_CF_NEVER_REPOSSESS = 1024
 } MVMCollectableFlags;
 
 #ifdef MVM_USE_OVERFLOW_SERIALIZATION_INDEX
@@ -143,18 +149,12 @@ struct MVMSerializationIndex {
  * type object.
  */
 struct MVMCollectable {
-    /* Identifier of the thread that currently owns the object, if any. If the
-     * object is unshared, then this is always the creating thread. If it is
-     * shared then it's whoever currently holds the mutex on it, or 0 if there
-     * is no held mutex. */
-    MVMuint32 owner;
-
-    /* Collectable flags (see MVMCollectableFlags). */
-    MVMuint16 flags;
-
-    /* Object size, in bytes. */
-    MVMuint16 size;
-
+    /* Put this union first, as these pointers/indexes are relatively "cold",
+       whereas "flags" is accessed relatively frequently, as are the fields
+       that follow in the structures into which MVMCollectable is embedded.
+       Shrinking the size of the active part of the structure slightly
+       increases the chance that it fits into the CPU's L1 cache, which is a
+       "free" performance win. */
     union {
         /* Forwarding pointer, for copying/compacting GC purposes. */
         MVMCollectable *forwarder;
@@ -175,6 +175,18 @@ struct MVMCollectable {
         /* Used to chain STables queued to be freed. */
         MVMSTable *st;
     } sc_forward_u;
+
+    /* Identifier of the thread that currently owns the object, if any. If the
+     * object is unshared, then this is always the creating thread. If it is
+     * shared then it's whoever currently holds the mutex on it, or 0 if there
+     * is no held mutex. */
+    MVMuint32 owner;
+
+    /* Collectable flags (see MVMCollectableFlags). */
+    MVMuint16 flags;
+
+    /* Object size, in bytes. */
+    MVMuint16 size;
 };
 #ifdef MVM_USE_OVERFLOW_SERIALIZATION_INDEX
 #  define MVM_DIRECT_SC_IDX_SENTINEL 0xFFFF
@@ -596,3 +608,4 @@ MVMint64 MVM_6model_try_cache_type_check(MVMThreadContext *tc, MVMObject *obj, M
 void MVM_6model_invoke_default(MVMThreadContext *tc, MVMObject *invokee, MVMCallsite *callsite, MVMRegister *args);
 void MVM_6model_stable_gc_free(MVMThreadContext *tc, MVMSTable *st);
 MVMuint64 MVM_6model_next_type_cache_id(MVMThreadContext *tc);
+void MVM_6model_never_repossess(MVMThreadContext *tc, MVMObject *obj);

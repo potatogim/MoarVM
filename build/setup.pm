@@ -23,12 +23,6 @@ our %TP_TOM = (
     src  => [ '3rdparty/libtommath' ],
 );
 
-our %TP_LN = (
-    name => 'linenoise',
-    path => '3rdparty/linenoise',
-    src  => [ '3rdparty/linenoise' ],
-);
-
 our %TP_MT = (
     name => 'tinymt',
     path => '3rdparty/tinymt',
@@ -73,7 +67,6 @@ our %THIRDPARTY = (
     lao => { %TP_LAO },
     tom => { %TP_TOM },
     sha => { %TP_SHA },
-    ln  => { %TP_LN },
     mt  => { %TP_MT },
     dc  => { %TP_DC },
     dcb => { %TP_DCB },
@@ -129,7 +122,7 @@ our %TC_POSIX = (
     ccshared   => '-fPIC',
     ldshared   => '-shared @ccshared@',
     moarshared => '',
-    ldrpath    => '-Wl,-rpath,@libdir@',
+    ldrpath    => '-Wl,-rpath,@libdir@ -Wl,-rpath,@prefix@/share/perl6/site/lib',
 
     arflags => 'rcs',
     arout   => '',
@@ -282,6 +275,7 @@ our %COMPILERS = (
 
         noreturnspecifier => '',
         noreturnattribute => '__attribute__((noreturn))',
+        formatattribute   => '__attribute__((format(X, Y, Z)))',
     },
 
     clang => {
@@ -303,6 +297,7 @@ our %COMPILERS = (
 
         noreturnspecifier => '',
         noreturnattribute => '__attribute__((noreturn))',
+        formatattribute   => '__attribute__((format(X, Y, Z)))',
     },
 
     cl => {
@@ -324,6 +319,7 @@ our %COMPILERS = (
 
         noreturnspecifier => '__declspec(noreturn)',
         noreturnattribute => '',
+        formatattribute   => '', # TODO
     },
 
     cc => {
@@ -345,6 +341,7 @@ our %COMPILERS = (
 
         noreturnspecifier => '',
         noreturnattribute => '',
+        formatattribute   => '',
     },
 );
 

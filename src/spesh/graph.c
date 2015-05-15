@@ -400,6 +400,7 @@ static void build_cfg(MVMThreadContext *tc, MVMSpeshGraph *g, MVMStaticFrame *sf
             cur_bb = MVM_spesh_alloc(tc, g, sizeof(MVMSpeshBB));
             cur_bb->first_ins = cur_ins;
             cur_bb->idx = bb_idx;
+            cur_bb->initial_pc = i;
             bb_idx++;
 
             /* Record instruction -> BB start mapping. */
@@ -755,7 +756,7 @@ static void add_to_frontier_set(MVMThreadContext *tc, MVMSpeshGraph *g, MVMSpesh
     target->num_df++;
 }
 static void add_dominance_frontiers(MVMThreadContext *tc, MVMSpeshGraph *g, MVMSpeshBB **rpo, MVMint32 *doms) {
-    MVMint32 i, j;
+    MVMint32 j;
     MVMSpeshBB *b = g->entry;
     while (b) {
         if (b->num_pred >= 2) { /* Thus it's a join point */
@@ -835,8 +836,12 @@ static SSAVarInfo * initialize_ssa_var_info(MVMThreadContext *tc, MVMSpeshGraph 
     return var_info;
 }
 
-MVMOpInfo *get_phi(MVMThreadContext *tc, MVMSpeshGraph *g, MVMint32 nrargs) {
+MVMOpInfo *get_phi(MVMThreadContext *tc, MVMSpeshGraph *g, MVMuint32 nrargs) {
     MVMOpInfo *result = NULL;
+
+    /* Check number of args to phi isn't huge. */
+    if (nrargs > 0xFFFF)
+        MVM_panic(1, "Spesh: SSA calculation failed; cannot allocate enormous PHI node");
 
     /* Up to 64 args, almost every number is represented, but after that
      * we have a sparse array through which we must search */

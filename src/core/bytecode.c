@@ -3,7 +3,7 @@
 /* Some constants. */
 #define HEADER_SIZE                 92
 #define MIN_BYTECODE_VERSION        2
-#define MAX_BYTECODE_VERSION        4
+#define MAX_BYTECODE_VERSION        5
 #define FRAME_HEADER_SIZE           ((cu->body.bytecode_version >= 4 ? 11 : 9) * 4 + (cu->body.bytecode_version >= 4 ? 3 : 2) * 2)
 #define FRAME_HANDLER_SIZE          (4 * 4 + 2 * 2)
 #define FRAME_SLV_SIZE              (2 * 2 + 2 * 4)
@@ -32,16 +32,16 @@ typedef struct {
     MVMuint32  expected_strings;
 
     /* The SC dependencies segment. */
-    MVMuint8  *sc_seg;
     MVMuint32  expected_scs;
+    MVMuint8  *sc_seg;
 
     /* The extension ops segment. */
     MVMuint8 *extop_seg;
     MVMuint32 expected_extops;
 
     /* The frame segment. */
-    MVMuint8  *frame_seg;
     MVMuint32  expected_frames;
+    MVMuint8  *frame_seg;
     MVMuint16 *frame_outer_fixups;
 
     /* The callsites segment. */
@@ -49,8 +49,8 @@ typedef struct {
     MVMuint32  expected_callsites;
 
     /* The bytecode segment. */
-    MVMuint8  *bytecode_seg;
     MVMuint32  bytecode_size;
+    MVMuint8  *bytecode_seg;
 
     /* The annotations segment */
     MVMuint8  *annotation_seg;
@@ -58,6 +58,9 @@ typedef struct {
 
     /* HLL name string index */
     MVMuint32  hll_str_idx;
+
+    /* The limit we can not read beyond. */
+    MVMuint8 *read_limit;
 
     /* Special frame indexes */
     MVMuint32  main_frame;
@@ -76,13 +79,6 @@ static void memcpy_endian(void *dest, MVMuint8 *src, size_t size) {
 #else
     memcpy(dest, src, size);
 #endif
-}
-
-/* Reads a uint64 from a buffer. */
-static MVMuint64 read_int64(MVMuint8 *buffer, size_t offset) {
-    MVMuint64 value;
-    memcpy_endian(&value, buffer + offset, 8);
-    return value;
 }
 
 /* Reads a uint32 from a buffer. */
@@ -104,13 +100,6 @@ static MVMuint8 read_int8(MVMuint8 *buffer, size_t offset) {
     return buffer[offset];
 }
 
-/* Reads double from a buffer. */
-static double read_double(char *buffer, size_t offset) {
-    double value;
-    memcpy(&value, buffer + offset, 8);
-    return value;
-}
-
 /* Cleans up reader state. */
 static void cleanup_all(MVMThreadContext *tc, ReaderState *rs) {
     if (rs->frame_outer_fixups) {
@@ -122,11 +111,9 @@ static void cleanup_all(MVMThreadContext *tc, ReaderState *rs) {
 
 /* Ensures we can read a certain amount of bytes without overrunning the end
  * of the stream. */
-static void ensure_can_read(MVMThreadContext *tc, MVMCompUnit *cu, ReaderState *rs, MVMuint8 *pos, MVMuint32 size) {
-    MVMCompUnitBody *cu_body = &cu->body;
-    if (pos + size > cu_body->data_start + cu_body->data_size) {
-        if (rs)
-            cleanup_all(tc, rs);
+MVM_STATIC_INLINE void ensure_can_read(MVMThreadContext *tc, MVMCompUnit *cu, ReaderState *rs, MVMuint8 *pos, MVMuint32 size) {
+    if (pos + size > rs->read_limit) {
+        cleanup_all(tc, rs);
         MVM_exception_throw_adhoc(tc, "Read past end of bytecode stream");
     }
 }
@@ -166,6 +153,7 @@ static ReaderState * dissect_bytecode(MVMThreadContext *tc, MVMCompUnit *cu) {
     rs = MVM_malloc(sizeof(ReaderState));
     memset(rs, 0, sizeof(ReaderState));
     rs->version = version;
+    rs->read_limit = cu_body->data_start + cu_body->data_size;
     cu->body.bytecode_version = version;
 
     /* Locate SC dependencies segment. */
@@ -264,7 +252,6 @@ static ReaderState * dissect_bytecode(MVMThreadContext *tc, MVMCompUnit *cu) {
 
 /* Loads the string heap. */
 static MVMString ** deserialize_strings(MVMThreadContext *tc, MVMCompUnit *cu, ReaderState *rs) {
-    MVMCompUnitBody *cu_body = &cu->body;
     MVMString **strings;
     MVMuint8   *pos;
     MVMuint32   i, ss;
@@ -277,15 +264,26 @@ static MVMString ** deserialize_strings(MVMThreadContext *tc, MVMCompUnit *cu, R
     /* Load strings. */
     pos = rs->string_seg;
     for (i = 0; i < rs->expected_strings; i++) {
+        MVMint32 decode_utf8 = 1;
+
         /* Ensure we can read at least a string size here and do so. */
         ensure_can_read(tc, cu, rs, pos, 4);
         ss = read_int32(pos, 0);
         pos += 4;
 
+        /* At high enough bytecode file versions, the LSB on this number
+         * is 1 if we should decode as UTF-8, and 0 if Latin-1 will do. */
+        if (rs->version >= 5) {
+            decode_utf8 = ss & 1;
+            ss = ss >> 1;
+        }
+
         /* Ensure we can read in the string of this size, and decode
          * it if so. */
         ensure_can_read(tc, cu, rs, pos, ss);
-        MVM_ASSIGN_REF(tc, &(cu->common.header), strings[i], MVM_string_utf8_decode(tc, tc->instance->VMString, (char *)pos, ss));
+        MVM_ASSIGN_REF(tc, &(cu->common.header), strings[i], decode_utf8
+            ? MVM_string_utf8_decode(tc, tc->instance->VMString, (char *)pos, ss)
+            : MVM_string_latin1_decode(tc, tc->instance->VMString, (char *)pos, ss));
         pos += ss;
 
         /* Add alignment. */
@@ -485,10 +483,9 @@ static MVMExtOpRecord * deserialize_extop_records(MVMThreadContext *tc, MVMCompU
 /* Loads the static frame information (what locals we have, bytecode offset,
  * lexicals, etc.) */
 static MVMStaticFrame ** deserialize_frames(MVMThreadContext *tc, MVMCompUnit *cu, ReaderState *rs) {
-    MVMCompUnitBody *cu_body = &cu->body;
     MVMStaticFrame **frames;
     MVMuint8        *pos;
-    MVMuint32        bytecode_pos, bytecode_size, num_locals, i, j;
+    MVMuint32        bytecode_pos, bytecode_size, i, j;
 
     /* Allocate frames array. */
     if (rs->expected_frames == 0) {
@@ -919,7 +916,7 @@ void MVM_bytecode_unpack(MVMThreadContext *tc, MVMCompUnit *cu) {
 /* returns the annotation for that bytecode offset */
 MVMBytecodeAnnotation * MVM_bytecode_resolve_annotation(MVMThreadContext *tc, MVMStaticFrameBody *sfb, MVMuint32 offset) {
     MVMBytecodeAnnotation *ba = NULL;
-    MVMuint32 i, j;
+    MVMuint32 i;
 
     if (sfb->num_annotations && offset < sfb->bytecode_size) {
         MVMuint8 *cur_anno = sfb->annotations_data;

@@ -181,8 +181,10 @@ OBJECTS = src/core/callsite@obj@ \
           src/strings/decode_stream@obj@ \
           src/strings/ascii@obj@ \
           src/strings/utf8@obj@ \
+          src/strings/nfg@obj@ \
           src/strings/ops@obj@ \
           src/strings/unicode@obj@ \
+          src/strings/normalize@obj@ \
           src/strings/latin1@obj@ \
           src/strings/utf16@obj@ \
           src/strings/windows1252@obj@ \
@@ -309,10 +311,12 @@ HEADERS = src/moar.h \
           src/spesh/inline.h \
           src/spesh/osr.h \
           src/strings/unicode_gen.h \
+          src/strings/normalize.h \
           src/strings/decode_stream.h \
           src/strings/ascii.h \
           src/strings/utf8.h \
           src/strings/iter.h \
+          src/strings/nfg.h \
           src/strings/ops.h \
           src/strings/unicode.h \
           src/strings/latin1.h \
@@ -540,10 +544,6 @@ dasm_all: src/jit/emit_win32_x64.c src/jit/emit_posix_x64.c
 	$(MSG) linking $@
 	$(CMD)@sharule@ $(NOOUT)
 
-@lnlib@: @lnobjects@
-	$(MSG) linking $@
-	$(CMD)@lnrule@ $(NOOUT)
-
 @mtlib@: @mtobjects@
 	$(MSG) linking $@
 	$(CMD)@mtrule@ $(NOOUT)
@@ -570,7 +570,6 @@ realclean: clean
 	-$(CMD)@laoclean@ $(NOOUT) $(NOERR)
 	-$(CMD)@tomclean@ $(NOOUT) $(NOERR)
 	-$(CMD)@shaclean@ $(NOOUT) $(NOERR)
-	-$(CMD)@lnclean@ $(NOOUT) $(NOERR)
 	-$(CMD)@mtclean@ $(NOOUT) $(NOERR)
 	-$(CMD)@dcclean@ $(NOOUT) $(NOERR)
 

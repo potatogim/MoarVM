@@ -6,6 +6,9 @@ struct MVMFixedSizeAlloc {
      * need arises). */
     MVMFixedSizeAllocSizeClass *size_classes;
 
+    /* Spin lock used for reading from the free list, to avoid ABA. */
+    AO_t freelist_spin;
+
     /* Mutex for when we can't do a cheap/simple allocation. */
     uv_mutex_t complex_alloc_mutex;
 };
@@ -63,3 +66,4 @@ MVMFixedSizeAlloc * MVM_fixed_size_create(MVMThreadContext *tc);
 void * MVM_fixed_size_alloc(MVMThreadContext *tc, MVMFixedSizeAlloc *fsa, size_t bytes);
 void * MVM_fixed_size_alloc_zeroed(MVMThreadContext *tc, MVMFixedSizeAlloc *fsa, size_t bytes);
 void MVM_fixed_size_free(MVMThreadContext *tc, MVMFixedSizeAlloc *fsa, size_t bytes, void *free);
+void MVM_fixed_size_free_at_safepoint(MVMThreadContext *tc, MVMFixedSizeAlloc *fsa, size_t bytes, void *free);
